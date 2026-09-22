@@ -217,3 +217,136 @@ class TestDynamics365ExportDocuments:
             docs = ingestor.export_as_documents(data)
 
         assert docs == []
+
+    @patch("semantica.ingest.dynamics365_ingestor.DYNAMICS_AVAILABLE", True)
+    def test_export_opportunities_uses_opportunityid(self):
+        """Bug fix: 'opportunities'[:-1] == 'opportunitie', not 'opportunity'."""
+        from semantica.ingest.dynamics365_ingestor import Dynamics365Data, Dynamics365Ingestor
+        import semantica.ingest.dynamics365_ingestor as _mod
+
+        data = Dynamics365Data(
+            records=[{"opportunityid": "opp-001", "name": "Deal A"}],
+            entity_name="opportunities",
+            row_count=1,
+            columns=["opportunityid", "name"],
+            org_url="https://myorg.crm.dynamics.com",
+        )
+        mock_msal_app = MagicMock()
+        mock_msal_app.acquire_token_for_client.return_value = {"access_token": "tok"}
+
+        with patch.object(_mod, "_msal") as mock_msal_mod:
+            mock_msal_mod.ConfidentialClientApplication.return_value = mock_msal_app
+            ingestor = Dynamics365Ingestor(
+                tenant_id="t", client_id="c", client_secret="s",
+                org_url="https://myorg.crm.dynamics.com",
+            )
+            docs = ingestor.export_as_documents(data)
+
+        assert len(docs) == 1
+        assert docs[0]["id"] == "opp-001", (
+            f"Expected 'opp-001' but got {docs[0]['id']!r} — irregular plural map broken"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Context manager on Ingestor
+# ---------------------------------------------------------------------------
+
+
+class TestDynamics365IngestorContextManager:
+
+    @patch("semantica.ingest.dynamics365_ingestor.DYNAMICS_AVAILABLE", True)
+    def test_ingestor_context_manager_calls_connect_and_disconnect(self):
+        """Dynamics365Ingestor must support `with` and delegate to connector."""
+        from semantica.ingest.dynamics365_ingestor import Dynamics365Ingestor
+        import semantica.ingest.dynamics365_ingestor as _mod
+
+        mock_msal_app = MagicMock()
+        mock_msal_app.acquire_token_for_client.return_value = {"access_token": "tok", "expires_in": 3600}
+
+        with patch.object(_mod, "_msal") as mock_msal_mod:
+            mock_msal_mod.ConfidentialClientApplication.return_value = mock_msal_app
+            ingestor = Dynamics365Ingestor(
+                tenant_id="t", client_id="c", client_secret="s",
+                org_url="https://myorg.crm.dynamics.com",
+            )
+            with ingestor as ctx:
+                assert ctx is ingestor
+                assert ingestor._connector._access_token == "tok"
+
+        # After __exit__ the token should be cleared
+        assert ingestor._connector._access_token is None
+
+
+# ---------------------------------------------------------------------------
+# nextLink origin validation
+# ---------------------------------------------------------------------------
+
+
+class TestNextLinkOriginValidation:
+
+    @patch("semantica.ingest.dynamics365_ingestor.DYNAMICS_AVAILABLE", True)
+    def test_cross_origin_nextlink_raises_processing_error(self):
+        """nextLink pointing to a different origin must raise ProcessingError."""
+        from semantica.ingest.dynamics365_ingestor import Dynamics365Ingestor
+        from semantica.utils.exceptions import ProcessingError
+        import semantica.ingest.dynamics365_ingestor as _mod
+
+        # First page returns a cross-origin nextLink.
+        page1 = MagicMock()
+        page1.raise_for_status = MagicMock()
+        page1.json.return_value = {
+            "value": [{"accountid": "a1", "name": "Acme"}],
+            "@odata.nextLink": "https://evil.attacker.com/api/data/v9.2/accounts?$skip=100",
+        }
+
+        mock_ssrf = MagicMock(return_value=page1)
+        mock_msal_app = MagicMock()
+        mock_msal_app.acquire_token_for_client.return_value = {"access_token": "tok", "expires_in": 3600}
+
+        with patch.object(_mod, "request_with_ssrf_guard", mock_ssrf), \
+             patch.object(_mod, "_msal") as mock_msal_mod:
+            mock_msal_mod.ConfidentialClientApplication.return_value = mock_msal_app
+            ingestor = Dynamics365Ingestor(
+                tenant_id="t", client_id="c", client_secret="s",
+                org_url="https://myorg.crm.dynamics.com",
+            )
+            with pytest.raises(ProcessingError, match="nextLink origin mismatch"):
+                ingestor.ingest_entity("accounts")
+
+
+# ---------------------------------------------------------------------------
+# Token expiry
+# ---------------------------------------------------------------------------
+
+
+class TestTokenExpiry:
+
+    @patch("semantica.ingest.dynamics365_ingestor.DYNAMICS_AVAILABLE", True)
+    def test_expired_token_triggers_reconnect(self):
+        """_ensure_connected must call connect() again when token has expired."""
+        from semantica.ingest.dynamics365_ingestor import Dynamics365Connector
+        import semantica.ingest.dynamics365_ingestor as _mod
+        import time as _time
+
+        mock_msal_app = MagicMock()
+        mock_msal_app.acquire_token_for_client.return_value = {
+            "access_token": "fresh-token",
+            "expires_in": 3600,
+        }
+
+        with patch.object(_mod, "_msal") as mock_msal_mod:
+            mock_msal_mod.ConfidentialClientApplication.return_value = mock_msal_app
+            connector = Dynamics365Connector(
+                tenant_id="t", client_id="c", client_secret="s",
+                org_url="https://myorg.crm.dynamics.com",
+            )
+            # Simulate an already-expired token
+            connector._access_token = "old-token"
+            connector._token_expires_at = _time.time() - 1  # already expired
+
+            connector._ensure_connected()
+
+        # connect() was called again (total calls == 1 since we set state manually)
+        assert mock_msal_app.acquire_token_for_client.call_count == 1
+        assert connector._access_token == "fresh-token"

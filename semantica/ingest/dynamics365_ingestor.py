@@ -68,6 +68,7 @@ License: MIT
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -102,6 +103,14 @@ _logger = get_logger("dynamics365_ingestor")
 
 # Dynamics 365 Web API version used for all requests.
 _WEBAPI_VERSION = "v9.2"
+
+# Irregular plural → singular map for entity ID inference.
+_IRREGULAR_SINGULARS: Dict[str, str] = {
+    'opportunities': 'opportunity',
+    'activities': 'activity',
+    'categories': 'category',
+    'currencies': 'currency',
+}
 
 # Entities that are almost always present in a standard Dynamics 365 org.
 _DEFAULT_ENTITIES = [
@@ -253,6 +262,7 @@ class Dynamics365Connector:
 
         self._msal_app: Optional[Any] = None
         self._access_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
         self.logger = _logger
 
     # ------------------------------------------------------------------
@@ -292,6 +302,7 @@ class Dynamics365Connector:
             )
 
         self._access_token = result["access_token"]
+        self._token_expires_at = time.time() + result.get("expires_in", 3600) - 60
         self.logger.info("Dynamics365Connector.connect: token acquired successfully")
 
     def disconnect(self) -> None:
@@ -343,7 +354,7 @@ class Dynamics365Connector:
         }
 
     def _ensure_connected(self) -> None:
-        if not self._access_token:
+        if not self._access_token or time.time() >= self._token_expires_at:
             self.connect()
 
     # Context-manager support (mirrors SAP/Snowflake connectors).
@@ -353,6 +364,18 @@ class Dynamics365Connector:
 
     def __exit__(self, *_: Any) -> None:
         self.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Origin validation helper for nextLink SSRF protection
+# ---------------------------------------------------------------------------
+
+def _same_origin(a: str, b: str) -> bool:
+    """Return True if URLs *a* and *b* share the same scheme, hostname, and port."""
+    pa, pb = urlparse(a), urlparse(b)
+    port_a = pa.port or (443 if pa.scheme == "https" else 80)
+    port_b = pb.port or (443 if pb.scheme == "https" else 80)
+    return pa.scheme == pb.scheme and pa.hostname == pb.hostname and port_a == port_b
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +431,17 @@ class Dynamics365Ingestor:
             )
         self.logger = _logger
         self._progress = get_progress_tracker()
+
+    # ------------------------------------------------------------------
+    # Context-manager support
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "Dynamics365Ingestor":
+        self._connector.connect()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self._connector.disconnect()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -547,7 +581,15 @@ class Dynamics365Ingestor:
                     len(all_records),
                 )
 
-                next_url = payload.get("@odata.nextLink")
+                next_link = payload.get("@odata.nextLink")
+                if next_link:
+                    if not _same_origin(self._connector.org_url, next_link):
+                        raise ProcessingError(
+                            f"nextLink origin mismatch: refusing to send credentials to {next_link!r}"
+                        )
+                    next_url = next_link
+                else:
+                    next_url = None
                 # Honour top: stop paging once we have enough records.
                 if top is not None and len(all_records) >= top:
                     all_records = all_records[:top]
@@ -608,7 +650,7 @@ class Dynamics365Ingestor:
         for index, record in enumerate(data.records):
             # Best-effort ID resolution: prefer common Dynamics ID fields.
             record_id = (
-                record.get(f"{data.entity_name[:-1]}id")  # e.g. accountid
+                record.get(f"{_IRREGULAR_SINGULARS.get(data.entity_name, data.entity_name[:-1])}id")  # e.g. accountid, opportunityid
                 or record.get("id")
                 or record.get("Id")
                 or f"{data.entity_name}:{index}"
