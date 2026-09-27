@@ -110,8 +110,12 @@
               "integrations/bigquery",
               "integrations/salesforce",
               "integrations/tableau",
+              "integrations/airflow",
               "integrations/redshift",
-              "integrations/powerbi"
+              "integrations/cassandra",
+              "integrations/powerbi",
+              "integrations/servicenow",
+              "integrations/looker"
             ]
           },
           {
@@ -206,6 +210,7 @@
               "reference/semantic_extract",
               "reference/reasoning",
               "reference/truth_maintenance",
+              "reference/temporal_truth_maintenance",
               "reference/ontology"
             ]
           },
