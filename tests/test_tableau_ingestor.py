@@ -121,7 +121,8 @@ class TestTableauConnector:
     """Unit tests for TableauConnector authentication and lifecycle."""
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_init_with_pat_credentials(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_init_with_pat_credentials(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauConnector
 
         connector = TableauConnector(
@@ -143,7 +144,8 @@ class TestTableauConnector:
             TableauConnector(token_name="t", token_value="v")
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_init_raises_without_credentials(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_init_raises_without_credentials(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauConnector
         from semantica.utils.exceptions import ValidationError
 
@@ -151,7 +153,8 @@ class TestTableauConnector:
             TableauConnector(server_url="https://tableau.example.com")
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_connect_uses_pat_auth(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_connect_uses_pat_auth(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauConnector
         import semantica.ingest.tableau_ingestor as _mod
 
@@ -173,7 +176,8 @@ class TestTableauConnector:
         mock_server.auth.sign_in.assert_called_once()
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_connect_returns_existing_client(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_connect_returns_existing_client(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauConnector
 
         connector = TableauConnector(
@@ -187,7 +191,8 @@ class TestTableauConnector:
         assert result is mock_server
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_disconnect_clears_server(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_disconnect_clears_server(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauConnector
 
         connector = TableauConnector(
@@ -209,12 +214,14 @@ class TestTableauIngestorWorkbooks:
     """Unit tests for TableauIngestor.ingest_workbooks."""
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_ingest_workbooks_returns_tableau_data(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    @patch("semantica.ingest.tableau_ingestor.TSC")
+    def test_ingest_workbooks_returns_tableau_data(self, mock_tsc, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         mock_wb = _make_mock_workbook()
         mock_server = MagicMock()
-        mock_server.workbooks.get.return_value = ([mock_wb], None)
+        mock_tsc.Pager.return_value = [mock_wb]
 
         ingestor = TableauIngestor(
             server_url="https://tableau.example.com",
@@ -233,13 +240,15 @@ class TestTableauIngestorWorkbooks:
         assert data.server_url == "https://tableau.example.com"
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_ingest_workbooks_filters_by_project(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    @patch("semantica.ingest.tableau_ingestor.TSC")
+    def test_ingest_workbooks_filters_by_project(self, mock_tsc, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauIngestor
 
         wb_finance = _make_mock_workbook(wb_id="wb-001", project_name="Finance")
         wb_sales = _make_mock_workbook(wb_id="wb-002", project_name="Sales")
         mock_server = MagicMock()
-        mock_server.workbooks.get.return_value = ([wb_finance, wb_sales], None)
+        mock_tsc.Pager.return_value = [wb_finance, wb_sales]
 
         ingestor = TableauIngestor(
             server_url="https://tableau.example.com",
@@ -262,12 +271,14 @@ class TestTableauIngestorDatasources:
     """Unit tests for TableauIngestor.ingest_datasources."""
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_ingest_datasources_returns_tableau_data(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    @patch("semantica.ingest.tableau_ingestor.TSC")
+    def test_ingest_datasources_returns_tableau_data(self, mock_tsc, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         mock_ds = _make_mock_datasource()
         mock_server = MagicMock()
-        mock_server.datasources.get.return_value = ([mock_ds], None)
+        mock_tsc.Pager.return_value = [mock_ds]
 
         ingestor = TableauIngestor(
             server_url="https://tableau.example.com",
@@ -289,11 +300,75 @@ class TestTableauIngestorDatasources:
 # ---------------------------------------------------------------------------
 
 
+
+
+# ---------------------------------------------------------------------------
+# TableauIngestor.ingest_fields
+# ---------------------------------------------------------------------------
+
+
+class TestTableauIngestorFields:
+    """Unit tests for TableauIngestor.ingest_fields."""
+
+    @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    @patch("semantica.ingest.tableau_ingestor.TSC")
+    def test_ingest_fields_returns_tableau_data(self, mock_tsc, mock_validate):
+        from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
+
+        mock_field = MagicMock()
+        mock_field.name = "order_id"
+        mock_field.data_type = "integer"
+        mock_field.description = "Unique order identifier"
+
+        mock_ds_item = MagicMock()
+        mock_ds_item.fields = [mock_field]
+        mock_tsc.DatasourceItem.return_value = mock_ds_item
+
+        mock_server = MagicMock()
+
+        def _populate_fields(ds_item):
+            ds_item.fields = [mock_field]
+
+        mock_server.datasources.populate_fields.side_effect = _populate_fields
+
+        ingestor = TableauIngestor(
+            server_url="https://tableau.example.com",
+            token_name="t",
+            token_value="v",
+        )
+        ingestor.connector._server = mock_server
+
+        data = ingestor.ingest_fields("ds-001")
+
+        assert isinstance(data, TableauData)
+        assert len(data.fields) == 1
+        assert data.fields[0]["name"] == "order_id"
+        assert data.fields[0]["type"] == "integer"
+        assert data.fields[0]["description"] == "Unique order identifier"
+        assert data.fields[0]["connection_id"] == "ds-001"
+        mock_server.datasources.populate_fields.assert_called_once()
+
+    @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_ingest_fields_raises_on_empty_datasource_id(self, mock_validate):
+        from semantica.ingest.tableau_ingestor import TableauIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        ingestor = TableauIngestor(
+            server_url="https://tableau.example.com",
+            token_name="t",
+            token_value="v",
+        )
+        with pytest.raises(ValidationError, match="datasource_id"):
+            ingestor.ingest_fields("")
+
 class TestTableauIngestorExportDocuments:
     """Unit tests for TableauIngestor.export_as_documents."""
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_export_workbooks_document_shape(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_export_workbooks_document_shape(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         data = TableauData(
@@ -327,7 +402,8 @@ class TestTableauIngestorExportDocuments:
         assert "row_data" in doc["metadata"]
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_export_datasources_document_shape(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_export_datasources_document_shape(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         data = TableauData(
@@ -348,7 +424,8 @@ class TestTableauIngestorExportDocuments:
         assert docs[0]["id"] == "ds-001"
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_export_fields_document_shape(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_export_fields_document_shape(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         data = TableauData(
@@ -376,7 +453,8 @@ class TestTableauIngestorExportDocuments:
         assert "order_id" in docs[0]["text"]
 
     @patch("semantica.ingest.tableau_ingestor.TABLEAU_AVAILABLE", True)
-    def test_export_empty_data_returns_empty_list(self):
+    @patch("semantica.ingest.tableau_ingestor.validate_url_for_request")
+    def test_export_empty_data_returns_empty_list(self, mock_validate):
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         data = TableauData(server_url="https://tableau.example.com", row_count=0)

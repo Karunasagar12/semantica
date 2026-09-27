@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
+from .ssrf import validate_url_for_request
 
 # ---------------------------------------------------------------------------
 # Optional-dependency guard — mirrors the pattern in salesforce_ingestor.
@@ -201,6 +202,7 @@ class TableauConnector:
                 "Tableau server_url is required. Pass it directly or set "
                 "TABLEAU_SERVER_URL in the environment."
             )
+        validate_url_for_request(self.server_url)
         if not (has_pat or has_password):
             raise ValidationError(
                 "Tableau authentication requires either a Personal Access Token "
@@ -388,7 +390,7 @@ class TableauIngestor:
                     tracking_id, message="Listing workbooks from Tableau…"
                 )
 
-                all_workbooks, _ = server.workbooks.get()
+                all_workbooks = list(TSC.Pager(server.workbooks))
                 workbooks = []
                 for wb in all_workbooks:
                     if project_name and wb.project_name != project_name:
@@ -468,7 +470,7 @@ class TableauIngestor:
                     tracking_id, message="Listing datasources from Tableau…"
                 )
 
-                all_datasources, _ = server.datasources.get()
+                all_datasources = list(TSC.Pager(server.datasources))
                 datasources = []
                 for ds in all_datasources:
                     if project_name and ds.project_name != project_name:
@@ -555,18 +557,21 @@ class TableauIngestor:
                 ds_item = TSC.DatasourceItem(project_id="")
                 ds_item._id = datasource_id
 
-                connections, _ = server.datasources.connections(ds_item)
+                # populate_fields() calls the Metadata API and attaches field
+                # metadata directly to ds_item.fields — connections.get() only
+                # returns database connection objects, which never carry field
+                # data, so it silently returned nothing for every datasource.
+                server.datasources.populate_fields(ds_item)
                 fields: List[Dict[str, Any]] = []
-                for conn in connections:
-                    for field_item in getattr(conn, "fields", []):
-                        fields.append(
-                            {
-                                "name": getattr(field_item, "name", None),
-                                "type": getattr(field_item, "data_type", None),
-                                "description": getattr(field_item, "description", None),
-                                "connection_id": conn.id,
-                            }
-                        )
+                for field_item in getattr(ds_item, "fields", []) or []:
+                    fields.append(
+                        {
+                            "name": getattr(field_item, "name", None),
+                            "type": getattr(field_item, "data_type", None),
+                            "description": getattr(field_item, "description", None),
+                            "connection_id": datasource_id,
+                        }
+                    )
 
                 self.progress_tracker.stop_tracking(
                     tracking_id,
