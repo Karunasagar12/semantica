@@ -44,7 +44,9 @@ License: MIT
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
+from typing_extensions import Self
 
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.logging import get_logger
@@ -95,13 +97,13 @@ class TableauData:
         ingested_at: Timestamp recorded when this object was created.
     """
 
-    workbooks: List[Dict[str, Any]] = field(default_factory=list)
-    datasources: List[Dict[str, Any]] = field(default_factory=list)
-    fields: List[Dict[str, Any]] = field(default_factory=list)
-    server_url: Optional[str] = None
-    site_name: Optional[str] = None
+    workbooks: list[dict[str, Any]] = field(default_factory=list)
+    datasources: list[dict[str, Any]] = field(default_factory=list)
+    fields: list[dict[str, Any]] = field(default_factory=list)
+    server_url: str | None = None
+    site_name: str | None = None
     row_count: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     ingested_at: datetime = field(default_factory=datetime.now)
 
 
@@ -150,12 +152,13 @@ class TableauConnector:
 
     def __init__(
         self,
-        server_url: Optional[str] = None,
-        site_name: Optional[str] = None,
-        token_name: Optional[str] = None,
-        token_value: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
+        server_url: str | None = None,
+        site_name: str | None = None,
+        token_name: str | None = None,
+        token_value: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        allow_private_ips: bool = False,
     ) -> None:
         if not TABLEAU_AVAILABLE:
             raise ImportError(
@@ -166,19 +169,22 @@ class TableauConnector:
 
         self.logger = get_logger("tableau_connector")
 
-        self.server_url: Optional[str] = server_url or os.getenv("TABLEAU_SERVER_URL")
+        self.server_url: str | None = server_url or os.getenv("TABLEAU_SERVER_URL")
         self.site_name: str = (
             site_name
             if site_name is not None
             else os.getenv("TABLEAU_SITE_NAME", "")
         )
-        self._token_name: Optional[str] = token_name or os.getenv("TABLEAU_TOKEN_NAME")
-        self._token_value: Optional[str] = token_value or os.getenv("TABLEAU_TOKEN_VALUE")
-        self._username: Optional[str] = username or os.getenv("TABLEAU_USERNAME")
-        self._password: Optional[str] = password or os.getenv("TABLEAU_PASSWORD")
+        self._token_name: str | None = token_name or os.getenv("TABLEAU_TOKEN_NAME")
+        self._token_value: str | None = token_value or os.getenv("TABLEAU_TOKEN_VALUE")
+        self._username: str | None = username or os.getenv("TABLEAU_USERNAME")
+        self._password: str | None = password or os.getenv("TABLEAU_PASSWORD")
+        self._allow_private_ips: bool = allow_private_ips or os.getenv(
+            "TABLEAU_ALLOW_PRIVATE_IPS", ""
+        ).lower() in ("1", "true", "yes")
 
         # Internal server reference — None until connect() is called.
-        self._server: Optional[Any] = None
+        self._server: Any | None = None
 
         self._validate_auth()
 
@@ -202,7 +208,7 @@ class TableauConnector:
                 "Tableau server_url is required. Pass it directly or set "
                 "TABLEAU_SERVER_URL in the environment."
             )
-        validate_url_for_request(self.server_url)
+        validate_url_for_request(self.server_url, allow_private_ips=self._allow_private_ips)
         if not (has_pat or has_password):
             raise ValidationError(
                 "Tableau authentication requires either a Personal Access Token "
@@ -267,11 +273,15 @@ class TableauConnector:
 
     def test_connection(self) -> bool:
         """Return True if a connection can be established, False otherwise."""
+        already_connected = self._server is not None
         try:
             server = self.connect()
             return server is not None
         except Exception:  # noqa: BLE001
             return False
+        finally:
+            if not already_connected:
+                self.disconnect()
 
 
 # ---------------------------------------------------------------------------
@@ -308,27 +318,33 @@ class TableauIngestor:
 
     def __init__(
         self,
-        server_url: Optional[str] = None,
-        site_name: Optional[str] = None,
-        token_name: Optional[str] = None,
-        token_value: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        server_url: str | None = None,
+        site_name: str | None = None,
+        token_name: str | None = None,
+        token_value: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        config: dict[str, Any] | None = None,
+        connector: TableauConnector | None = None,
         **kwargs: Any,
     ) -> None:
         self.logger = get_logger("tableau_ingestor")
-        self.config: Dict[str, Any] = config or {}
+        self.config: dict[str, Any] = config or {}
         self.config.update(kwargs)
 
-        self.connector = TableauConnector(
-            server_url=server_url,
-            site_name=site_name,
-            token_name=token_name,
-            token_value=token_value,
-            username=username,
-            password=password,
-        )
+        if connector is not None:
+            self.connector = connector
+        else:
+            # Fallback to self.config if kwargs are empty
+            self.connector = TableauConnector(
+                server_url=server_url or self.config.get("server_url"),
+                site_name=site_name or self.config.get("site_name"),
+                token_name=token_name or self.config.get("token_name"),
+                token_value=token_value or self.config.get("token_value"),
+                username=username or self.config.get("username"),
+                password=password or self.config.get("password"),
+                allow_private_ips=self.config.get("allow_private_ips", False),
+            )
 
         self.progress_tracker = get_progress_tracker()
         if not self.progress_tracker.enabled:
@@ -340,11 +356,16 @@ class TableauIngestor:
     # Context-manager support
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "TableauIngestor":
+    def __enter__(self) -> Self:
         self.connector.connect()
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         self.close()
 
     # ------------------------------------------------------------------
@@ -361,7 +382,7 @@ class TableauIngestor:
 
     def ingest_workbooks(
         self,
-        project_name: Optional[str] = None,
+        project_name: str | None = None,
     ) -> TableauData:
         """Fetch metadata for all accessible workbooks.
 
@@ -442,7 +463,7 @@ class TableauIngestor:
 
     def ingest_datasources(
         self,
-        project_name: Optional[str] = None,
+        project_name: str | None = None,
     ) -> TableauData:
         """Fetch metadata for all accessible published datasources.
 
@@ -562,7 +583,7 @@ class TableauIngestor:
                 # returns database connection objects, which never carry field
                 # data, so it silently returned nothing for every datasource.
                 server.datasources.populate_fields(ds_item)
-                fields: List[Dict[str, Any]] = []
+                fields: list[dict[str, Any]] = []
                 for field_item in getattr(ds_item, "fields", []) or []:
                     fields.append(
                         {
@@ -612,7 +633,7 @@ class TableauIngestor:
     def export_as_documents(
         self,
         data: TableauData,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Convert :class:`TableauData` to the Semantica document format.
 
         Produces the ``{id, text, metadata}`` shape used by other ingestors,
@@ -643,7 +664,7 @@ class TableauIngestor:
                     ...
                 ]
         """
-        documents: List[Dict[str, Any]] = []
+        documents: list[dict[str, Any]] = []
 
         for wb in data.workbooks:
             doc_id = str(wb.get("id", ""))

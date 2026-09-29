@@ -13,7 +13,7 @@ icon: "chart-bar"
 pip install "semantica[ingest-tableau]"
 
 # Or install the connector separately
-pip install tableauserverclient>=0.25
+pip install "tableauserverclient>=0.25"
 ```
 
 ## Basic Usage
