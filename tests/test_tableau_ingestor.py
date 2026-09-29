@@ -296,13 +296,6 @@ class TestTableauIngestorDatasources:
 
 
 # ---------------------------------------------------------------------------
-# TableauIngestor.export_as_documents
-# ---------------------------------------------------------------------------
-
-
-
-
-# ---------------------------------------------------------------------------
 # TableauIngestor.ingest_fields
 # ---------------------------------------------------------------------------
 
@@ -363,6 +356,12 @@ class TestTableauIngestorFields:
         with pytest.raises(ValidationError, match="datasource_id"):
             ingestor.ingest_fields("")
 
+
+# ---------------------------------------------------------------------------
+# TableauIngestor.export_as_documents
+# ---------------------------------------------------------------------------
+
+
 class TestTableauIngestorExportDocuments:
     """Unit tests for TableauIngestor.export_as_documents."""
 
@@ -407,7 +406,9 @@ class TestTableauIngestorExportDocuments:
         from semantica.ingest.tableau_ingestor import TableauData, TableauIngestor
 
         data = TableauData(
-            datasources=[{"id": "ds-001", "name": "Orders DS", "project_name": "Finance"}],
+            datasources=[
+                {"id": "ds-001", "name": "Orders DS", "project_name": "Finance"}
+            ],
             server_url="https://tableau.example.com",
             site_name="",
             row_count=1,

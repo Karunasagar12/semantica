@@ -208,7 +208,9 @@ class TableauConnector:
                 "Tableau server_url is required. Pass it directly or set "
                 "TABLEAU_SERVER_URL in the environment."
             )
-        validate_url_for_request(self.server_url, allow_private_ips=self._allow_private_ips)
+        validate_url_for_request(
+            self.server_url, allow_private_ips=self._allow_private_ips
+        )
         if not (has_pat or has_password):
             raise ValidationError(
                 "Tableau authentication requires either a Personal Access Token "
@@ -324,6 +326,7 @@ class TableauIngestor:
         token_value: str | None = None,
         username: str | None = None,
         password: str | None = None,
+        allow_private_ips: bool = False,
         config: dict[str, Any] | None = None,
         connector: TableauConnector | None = None,
         **kwargs: Any,
@@ -343,7 +346,8 @@ class TableauIngestor:
                 token_value=token_value or self.config.get("token_value"),
                 username=username or self.config.get("username"),
                 password=password or self.config.get("password"),
-                allow_private_ips=self.config.get("allow_private_ips", False),
+                allow_private_ips=allow_private_ips
+                or self.config.get("allow_private_ips", False),
             )
 
         self.progress_tracker = get_progress_tracker()
@@ -435,7 +439,10 @@ class TableauIngestor:
                     status="completed",
                     message=f"Fetched {len(workbooks)} workbooks",
                 )
-                self.logger.info("Workbook ingestion completed: %d workbook(s)", len(workbooks))
+                self.logger.info(
+                    "Workbook ingestion completed: %d workbook(s)",
+                    len(workbooks),
+                )
 
                 return TableauData(
                     workbooks=workbooks,
@@ -450,7 +457,9 @@ class TableauIngestor:
                     self.connector.disconnect()
 
         except (ValidationError, ProcessingError):
-            self.progress_tracker.stop_tracking(tracking_id, status="failed", message="Failed")
+            self.progress_tracker.stop_tracking(
+                tracking_id, status="failed", message="Failed"
+            )
             raise
         except Exception as exc:
             self.progress_tracker.stop_tracking(
@@ -530,7 +539,9 @@ class TableauIngestor:
                     self.connector.disconnect()
 
         except (ValidationError, ProcessingError):
-            self.progress_tracker.stop_tracking(tracking_id, status="failed", message="Failed")
+            self.progress_tracker.stop_tracking(
+                tracking_id, status="failed", message="Failed"
+            )
             raise
         except Exception as exc:
             self.progress_tracker.stop_tracking(
@@ -614,7 +625,9 @@ class TableauIngestor:
                     self.connector.disconnect()
 
         except (ValidationError, ProcessingError):
-            self.progress_tracker.stop_tracking(tracking_id, status="failed", message="Failed")
+            self.progress_tracker.stop_tracking(
+                tracking_id, status="failed", message="Failed"
+            )
             raise
         except Exception as exc:
             self.progress_tracker.stop_tracking(
