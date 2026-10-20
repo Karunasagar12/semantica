@@ -341,6 +341,7 @@ class OntologyIngestor:
                         cls_def["parents"] = parents
                     
                     # Collect other literal annotations beyond label/comment
+                    # Store with full URI keys to preserve namespace, collect all values
                     literal_annotations = {}
                     for pred, obj in graph.predicate_objects(s):
                         if isinstance(obj, rdflib.Literal):
@@ -348,8 +349,16 @@ class OntologyIngestor:
                             # Skip handled predicates
                             if pred_uri in [str(RDFS.label), str(RDFS.comment), str(RDFS.subClassOf), str(RDF.type)]:
                                 continue
-                            key = self._get_local_name(pred_uri)
-                            literal_annotations[key] = str(obj)
+                            # Use full URI as key to avoid collisions and preserve namespace
+                            if pred_uri not in literal_annotations:
+                                literal_annotations[pred_uri] = []
+                            # Store literal with its metadata (value, language, datatype)
+                            lit_data = {"value": str(obj)}
+                            if obj.language:
+                                lit_data["language"] = str(obj.language)
+                            if obj.datatype:
+                                lit_data["datatype"] = str(obj.datatype)
+                            literal_annotations[pred_uri].append(lit_data)
                     if literal_annotations:
                         cls_def["literal_annotations"] = literal_annotations
                     
@@ -399,6 +408,7 @@ class OntologyIngestor:
             prop_def["description"] = str(comment)
         
         # Collect other literal annotations beyond label/comment
+        # Store with full URI keys to preserve namespace, collect all values
         literal_annotations = {}
         for pred, obj in graph.predicate_objects(subject):
             if isinstance(obj, rdflib.Literal):
@@ -406,8 +416,16 @@ class OntologyIngestor:
                 # Skip handled predicates
                 if pred_uri in [str(RDFS.label), str(RDFS.comment), str(RDFS.domain), str(RDFS.range), str(RDF.type)]:
                     continue
-                key = self._get_local_name(pred_uri)
-                literal_annotations[key] = str(obj)
+                # Use full URI as key to avoid collisions and preserve namespace
+                if pred_uri not in literal_annotations:
+                    literal_annotations[pred_uri] = []
+                # Store literal with its metadata (value, language, datatype)
+                lit_data = {"value": str(obj)}
+                if obj.language:
+                    lit_data["language"] = str(obj.language)
+                if obj.datatype:
+                    lit_data["datatype"] = str(obj.datatype)
+                literal_annotations[pred_uri].append(lit_data)
         if literal_annotations:
             prop_def["literal_annotations"] = literal_annotations
         
