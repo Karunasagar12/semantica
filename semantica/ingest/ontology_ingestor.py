@@ -331,7 +331,7 @@ class OntologyIngestor:
                     comment = graph.value(s, RDFS.comment)
                     if comment:
                         cls_def["description"] = str(comment)
-                        
+                    
                     # Superclasses
                     parents = []
                     for _, _, parent in graph.triples((s, RDFS.subClassOf, None)):
@@ -339,7 +339,20 @@ class OntologyIngestor:
                             parents.append(str(parent))
                     if parents:
                         cls_def["parents"] = parents
-                        
+                    
+                    # Collect other literal annotations beyond label/comment
+                    literal_annotations = {}
+                    for pred, obj in graph.predicate_objects(s):
+                        if isinstance(obj, rdflib.Literal):
+                            pred_uri = str(pred)
+                            # Skip handled predicates
+                            if pred_uri in [str(RDFS.label), str(RDFS.comment), str(RDFS.subClassOf), str(RDF.type)]:
+                                continue
+                            key = self._get_local_name(pred_uri)
+                            literal_annotations[key] = str(obj)
+                    if literal_annotations:
+                        cls_def["literal_annotations"] = literal_annotations
+                    
                     classes[uri] = cls_def
         
         ontology["classes"] = list(classes.values())
@@ -384,7 +397,20 @@ class OntologyIngestor:
         comment = graph.value(subject, RDFS.comment)
         if comment:
             prop_def["description"] = str(comment)
-            
+        
+        # Collect other literal annotations beyond label/comment
+        literal_annotations = {}
+        for pred, obj in graph.predicate_objects(subject):
+            if isinstance(obj, rdflib.Literal):
+                pred_uri = str(pred)
+                # Skip handled predicates
+                if pred_uri in [str(RDFS.label), str(RDFS.comment), str(RDFS.domain), str(RDFS.range), str(RDF.type)]:
+                    continue
+                key = self._get_local_name(pred_uri)
+                literal_annotations[key] = str(obj)
+        if literal_annotations:
+            prop_def["literal_annotations"] = literal_annotations
+        
         # Domain and Range
         domains = sorted(
             {
